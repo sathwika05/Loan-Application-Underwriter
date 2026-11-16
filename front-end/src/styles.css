@@ -1,0 +1,68 @@
+:root {
+  --bg: #f7f8fa; --surface: #ffffff; --text: #1b1f24; --muted: #5f6b7a; --border: #dde2e8;
+  --accent: #2563eb; --accent-text: #ffffff; --danger-bg: #fdecec; --danger: #b42318;
+  --ok: #067647; --warn: #b54708; --bar: #e6e9ee;
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216; --surface: #171b21; --text: #e6e9ee; --muted: #9aa5b1; --border: #2a313a;
+    --accent: #5b8def; --danger-bg: #3a1714; --danger: #ffb4ab; --ok: #6ce9a6; --warn: #fdb022; --bar: #2a313a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+.topbar { display: flex; gap: 24px; align-items: center; padding: 12px 24px; background: var(--surface);
+  border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.page h1 { font-size: 1.5rem; }
+h2 { font-size: 1.15rem; margin-top: 24px; }
+button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-text); cursor: pointer; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button.secondary, button.nav { background: transparent; color: var(--text); border-color: var(--border); }
+button.nav.active { border-color: var(--accent); color: var(--accent); }
+button.link { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; }
+input, select, textarea { font: inherit; padding: 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); width: 100%; }
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.form label { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
+.form .wide { grid-column: 1 / -1; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.grow { flex: 1; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; }
+.muted { color: var(--muted); font-size: .9rem; }
+.error { background: var(--danger-bg); color: var(--danger); border-radius: 8px; padding: 12px; margin: 12px 0; }
+.error p { margin: 4px 0; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: .9rem; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover { background: var(--bg); }
+caption { text-align: left; font-weight: 600; padding: 8px 0; }
+.badge { display: inline-block; font-size: .75rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
+.badge-ROUTED { color: var(--ok); border-color: currentColor; }
+.badge-QUEUED { color: var(--warn); border-color: currentColor; }
+.steps { list-style: none; padding: 0; margin: 8px 0; }
+.step { padding: 3px 0; }
+.step-running { color: var(--accent); font-weight: 600; }
+.step-done { color: var(--ok); }
+.step-skipped { color: var(--muted); }
+.tool-running { color: var(--accent); } .tool-done { color: var(--ok); }
+.tool-error, .tool-limit_reached { color: var(--danger); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; }
+.tile.alert { border-color: var(--warn); }
+.tile-value { font-size: 1.8rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bar { display: inline-block; width: 100px; height: 8px; background: var(--bar); border-radius: 4px; margin-right: 8px; vertical-align: middle; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.bar-fill.hot { background: var(--warn); }
+.answer { white-space: pre-wrap; border-left: 3px solid var(--accent); padding-left: 12px; }
+.audit li { margin: 4px 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.form label.check { flex-direction: row; align-items: center; gap: 8px; }
+.form label.check input { width: auto; }
+.badge-COMPLETED { color: var(--muted); border-color: currentColor; }

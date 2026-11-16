@@ -1,0 +1,4 @@
+diagrams
+markdown
+pymupdf
+# also needs Graphviz (dot) and Chrome/Edge for PDF output

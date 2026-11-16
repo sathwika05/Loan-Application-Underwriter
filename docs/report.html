@@ -1,0 +1,491 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Underwriter Routing Report</title><style>
+@page { size: A4; margin: 12mm 13mm 12mm 13mm; }
+:root { --ink:#1f2937; --muted:#4b5563; --line:#cbd5e1; --head:#eef2ff; --accent:#3730a3; }
+* { box-sizing: border-box; }
+body { font-family: "Segoe UI", Calibri, Arial, sans-serif; font-size: 8.2pt; line-height: 1.28;
+       color: var(--ink); margin: 0; background: #fff; }
+h1 { font-size: 14pt; margin: 0 0 .5mm; color: var(--accent); }
+.meta { color: var(--muted); margin: 0 0 1.5mm; font-size: 8pt; }
+h2 { font-size: 10pt; margin: 2.4mm 0 1mm; color: var(--accent); border-bottom: 1px solid var(--line);
+     padding-bottom: .5mm; break-after: avoid; page-break-after: avoid; }
+p { margin: 0 0 1.2mm; }
+table { width: 100%; border-collapse: collapse; margin: 0 0 1.2mm; font-size: 7.6pt; }
+tr, td, th { break-inside: avoid; page-break-inside: avoid; }
+th, td { border: 1px solid var(--line); padding: .35mm 1.1mm; vertical-align: top; text-align: left; }
+th { background: var(--head); }
+thead { display: table-header-group; }
+code { font-family: Consolas, monospace; font-size: 7.3pt; background: #f1f5f9; padding: 0 .5mm; border-radius: 2px; }
+figure { margin: 0; text-align: center; break-inside: avoid; page-break-inside: avoid; }
+figure img { max-width: 100%; height: auto; }
+figcaption { font-size: 7.4pt; color: var(--muted); margin-top: .6mm; text-align: left; line-height: 1.25; }
+.design { break-inside: avoid; page-break-inside: avoid; }
+.pair { display: flex; gap: 4mm; align-items: flex-end; margin-bottom: 2mm; }
+.pair .aws { flex: 0 0 60%; } .pair .lg { flex: 1 1 0; }
+.pair img { max-height: 100mm; }
+.er img { max-height: 80mm; }
+.er figcaption { max-width: 120mm; margin: .6mm auto 0; }
+</style></head><body><h1>UC24.1 — GenAI-Powered Loan Underwriter Assignment</h1>
+<p class="meta">Build report · local prototype (not deployed) · FastAPI + LangGraph + OpenAI + PostgreSQL + React/TypeScript</p>
+
+<h2>1. Summary</h2>
+<p>The app routes each new loan application to an underwriter and explains why. A rules engine filters and scores underwriters deterministically. One OpenAI call (<code>gpt-4o-mini</code>) may shift each of the top-3 scores by at most ±0.10 and writes the rationale, and code validates that output before anything is saved.
+<strong>Working today, locally only:</strong> submission with duplicate protection, routing with live step and tool status, queueing when nobody is eligible, manager override with a required reason, outcome capture that <strong>adapts routing</strong> (per-underwriter stats plus versioned scoring weights), an audit trail, a dashboard, and an "ask why" agent. All of it has been exercised against a real local PostgreSQL 18 database and the live OpenAI API.
+<strong>Not built:</strong> authentication, deployment (the AWS diagram is a design only), and embeddings/pgvector. Learning is heuristic (moving averages plus rate-based re-weighting), not a trained model.</p>
+<h2>2. Assumptions and out of scope</h2>
+<p><strong>Assumptions:</strong> single machine; local Postgres (an Aurora cluster was provided, but its endpoint did not resolve in DNS); 9 seeded underwriters, 1 of them on leave; 4 loan types and 4 regions; "notify" means a row in the <code>notification</code> table; no login, so names are typed by hand.
+<strong>Out of scope / not built:</strong> authentication and roles, email or SMS delivery, document upload, a message queue (routing runs in an in-process thread), Alembic migrations (tables come from <code>create_all</code>, plus one idempotent <code>ALTER</code> at startup), Docker/CI/deployment, embeddings/pgvector, Elasticsearch/Milvus, and ML-trained routing.</p>
+<h2>3. Functional requirements</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Requirement</th>
+<th>Status</th>
+<th>Evidence in the code</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FR1</td>
+<td>Submit a loan application</td>
+<td><strong>Done</strong></td>
+<td><code>POST /api/applications</code>, validated by Pydantic</td>
+</tr>
+<tr>
+<td>FR2</td>
+<td>Find eligible underwriters and record exclusion reasons</td>
+<td><strong>Done</strong></td>
+<td><code>rules.eligibility_reasons</code>: active, loan type, region, amount, caseload</td>
+</tr>
+<tr>
+<td>FR3</td>
+<td>Deterministic scoring and ranking</td>
+<td><strong>Done</strong></td>
+<td><code>rules.score</code> (weights 0.3/0.3/0.2/0.2); ties broken by underwriter id</td>
+</tr>
+<tr>
+<td>FR4</td>
+<td>GenAI refines the top 3 for fairness, SLA and fit, and writes a rationale</td>
+<td><strong>Done</strong></td>
+<td><code>genai_optimize</code> and <code>guard</code>; skipped when only one candidate is eligible</td>
+</tr>
+<tr>
+<td>FR5</td>
+<td>Assign the underwriter, notify, and show the rationale to the submitter</td>
+<td><strong>Done</strong></td>
+<td>Notifications are database rows only; nothing is emailed</td>
+</tr>
+<tr>
+<td>FR6</td>
+<td>Queue when nobody is eligible; re-route on request</td>
+<td><strong>Done</strong></td>
+<td><code>queue</code> node; manual <code>POST /…/route</code>; every completed case also re-routes all QUEUED applications</td>
+</tr>
+<tr>
+<td>FR7</td>
+<td>Override with a required reason</td>
+<td><strong>Done</strong></td>
+<td>Reason of at least 10 characters, enforced by Pydantic and a database CHECK constraint</td>
+</tr>
+<tr>
+<td>FR8</td>
+<td>Append-only audit trail</td>
+<td><strong>Partial</strong></td>
+<td>Events are written on every step, but nothing in the database prevents an UPDATE or DELETE</td>
+</tr>
+<tr>
+<td>FR9</td>
+<td>Natural-language questions about a decision</td>
+<td><strong>Done</strong></td>
+<td>Tool-calling agent in <code>ask.py</code> with per-tool limits</td>
+</tr>
+<tr>
+<td>FR10</td>
+<td>Dashboard of caseloads and recent assignments</td>
+<td><strong>Done</strong></td>
+<td><code>GET /api/dashboard</code> and the Dashboard page</td>
+</tr>
+<tr>
+<td>FR11</td>
+<td>Adaptive optimisation from outcomes</td>
+<td><strong>Done</strong></td>
+<td><code>POST /…/complete</code> stores an <code>outcome</code>; <code>learning.py</code> updates the underwriter's quality and turnaround (EMA, α = 0.2) and, after at least 3 outcomes, writes a new <code>routing_weights</code> version that <code>score_rules</code> uses next</td>
+</tr>
+<tr>
+<td>FR12</td>
+<td>Ask about learning ("why did the weights change?")</td>
+<td><strong>Done</strong></td>
+<td><code>get_learning</code> tool (limit 1) in the ask agent</td>
+</tr>
+</tbody>
+</table>
+<h2>4. Non-functional requirements</h2>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Target</th>
+<th>How it is met (and gaps)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>NFR1</td>
+<td>No duplicate routings</td>
+<td>Unique <code>idempotency_key</code>; partial unique index (one active assignment per application); <code>SELECT … FOR UPDATE</code>; the graph exits early if the application is already assigned. A live duplicate POST returned the same application id.</td>
+</tr>
+<tr>
+<td>NFR2</td>
+<td>No missed routings</td>
+<td>The application is committed <em>before</em> routing starts, and its status is visible (NEW, ROUTED or QUEUED). QUEUED applications are re-routed whenever a case completes, and on startup every NEW or QUEUED application is re-routed (recovery after a crash; verified live). <strong>Gap:</strong> no recovery until the process restarts.</td>
+</tr>
+<tr>
+<td>NFR3</td>
+<td>Every routing is auditable</td>
+<td><code>audit_event</code> stores the full decision JSON: candidates, scores, AI output, exclusions and model name.</td>
+</tr>
+<tr>
+<td>NFR4</td>
+<td>Explainable and fair</td>
+<td>A rationale, a per-factor score breakdown, exclusion reasons, a fairness factor, the weights version used, and override reasons. The prompt requires names, and <code>humanize_ids</code> replaces any leftover "Underwriter 2" with the name.</td>
+</tr>
+<tr>
+<td>NFR5</td>
+<td>Deterministic</td>
+<td>The rules ranking is pure and unit-tested. The OpenAI call uses <code>temperature=0</code> and <code>seed=42</code>, which makes it near-deterministic, though the API doesn't guarantee it. Its effect is bounded to ±0.10 and stored, so a decision can be audited without calling the LLM again. There is no replay endpoint.</td>
+</tr>
+<tr>
+<td>NFR6</td>
+<td>Low latency: API under 500 ms; routing run under 10 s</td>
+<td>Measured: API median <strong>≈240 ms</strong>; routing <strong>3.4–4.1 s</strong> with the LLM call. The OpenAI client has a 20 s timeout and 1 retry; on failure the rules winner is used.</td>
+</tr>
+<tr>
+<td>NFR7</td>
+<td>Secrets kept out of code</td>
+<td>Keys live only in <code>backend/.env</code>, which is git-ignored. The front-end reads only <code>VITE_API_BASE_URL</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2>5. Back-of-the-envelope estimate</h2>
+<table>
+<thead>
+<tr>
+<th>Quantity</th>
+<th>Value</th>
+<th>Basis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Requests per day</td>
+<td>2,000 applications × about 10 calls each (1 POST, about 4 polls, about 5 page loads) ≈ <strong>20k requests/day</strong>, about 0.25 req/s on average and about 2.5 req/s at a 10× peak</td>
+<td><strong>Assumed</strong> volume</td>
+</tr>
+<tr>
+<td>Latency per routing run</td>
+<td>3.4 s and 4.1 s (2 runs with an LLM call); 0.01 s when only one candidate is eligible</td>
+<td><strong>Measured</strong>, local, n = 2+1</td>
+</tr>
+<tr>
+<td>Latency per "ask" run</td>
+<td>2.2 s, 1 tool call</td>
+<td><strong>Measured</strong>, n = 1</td>
+</tr>
+<tr>
+<td>Model cost per routing run</td>
+<td>615 input + 213 output tokens ≈ <strong>$0.0002</strong> per run, ≈ $0.44/day at 2,000 runs</td>
+<td>Tokens <strong>measured</strong>; price <strong>assumed</strong> at gpt-4o-mini list rates ($0.15 / $0.60 per million tokens)</td>
+</tr>
+<tr>
+<td>Storage</td>
+<td>≈ 4.5 KB per application across the routing tables (an outcome row adds about 0.1 KB, assumed) ≈ 9 MB/day ≈ 3.3 GB/year, before indexes</td>
+<td>Decision JSON averages 1,424 B and audit payloads 865 B (<strong>measured</strong>); volume <strong>assumed</strong></td>
+</tr>
+</tbody>
+</table>
+<h2>6. System design</h2>
+<div class="design">
+<div class="pair">
+<figure class="aws"><img src="diagrams/aws-architecture.png" alt="AWS production design">
+<figcaption><b>AWS: production design, not implemented.</b> The API enqueues routing to SQS; a Fargate worker runs the same LangGraph against Aurora PostgreSQL with pgvector. Today, by contrast, a background thread runs routing inside the API process against local Postgres.</figcaption></figure>
+<figure class="lg"><img src="diagrams/langgraph.png" alt="LangGraph routing graph">
+<figcaption><b>Routing graph, exported from the compiled LangGraph.</b> Dashed edges are conditional (already assigned → END; nobody eligible → queue). Only <code>genai_optimize</code> calls the LLM.</figcaption></figure>
+</div>
+<figure class="er"><img src="diagrams/er-diagram.png" alt="ER diagram">
+<figcaption><b>Data model, generated from the SQLAlchemy models.</b> One application has many assignments, but the partial unique index allows only one active assignment, which blocks double routing. <code>outcome</code> and <code>routing_weights</code> hold the learning data.</figcaption></figure>
+</div>
+
+<h2>7. Key design choices</h2>
+<table>
+<thead>
+<tr>
+<th>Chose</th>
+<th>Alternative</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rules engine ranks; the LLM adjusts only the top 3 by ±0.10</td>
+<td>Let the LLM choose freely</td>
+<td>Keeps routing deterministic and safe: the LLM can never pick an ineligible underwriter</td>
+</tr>
+<tr>
+<td>A <code>guard</code> node checks the LLM output</td>
+<td>Trust the JSON as returned</td>
+<td>It clamps adjustments, drops unknown ids, uses the LLM rationale only if the LLM's pick won, and falls back to the rules winner</td>
+</tr>
+<tr>
+<td><strong>Tool-call limits per run:</strong> graph state carries <code>run_id</code>; <code>genai_optimize</code> calls <code>runs.tool_call()</code> before OpenAI (limit 1); ask agent: <code>get_decision</code> 2, <code>get_underwriter</code> 3, <code>get_audit_trail</code> 2, <code>get_learning</code> 1, at most 4 turns</td>
+<td>No limits</td>
+<td>Caps cost and runaway loops. The counters live in the run registry (<code>runs.py</code>) keyed by <code>run_id</code>, not in <code>RouteState</code> itself</td>
+</tr>
+<tr>
+<td>LangGraph <code>StateGraph</code> with 2 conditional edges</td>
+<td>Plain function chain</td>
+<td>Explicit nodes give live per-step status and readable branching</td>
+</tr>
+<tr>
+<td>Background thread plus polling (30 attempts, 1 s apart)</td>
+<td>Synchronous request, or SQS</td>
+<td>Fits the time box; the UI shows progress and a timeout with a retry button</td>
+</tr>
+<tr>
+<td>Uniqueness enforced by the database</td>
+<td>An application-level check only</td>
+<td>Safe even when two requests race</td>
+</tr>
+<tr>
+<td>Learning: EMA per underwriter plus versioned, rate-based weights (minimum 3 outcomes)</td>
+<td>Train an ML ranking model</td>
+<td>Explainable and auditable (each version stores its reason); works with very little data</td>
+</tr>
+</tbody>
+</table>
+<h2>8. Trade-offs</h2>
+<table>
+<thead>
+<tr>
+<th>Trade-off</th>
+<th>Chose</th>
+<th>What it costs</th>
+<th>When I would switch</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>In-process thread vs SQS + worker</strong></td>
+<td>Thread</td>
+<td>No retries, no backpressure, no dead-letter queue; a crash is recovered only at the next restart</td>
+<td>Beyond about 5 req/s, or more than one API instance</td>
+</tr>
+<tr>
+<td><strong>In-memory run registry vs Postgres/Redis</strong></td>
+<td>In-memory</td>
+<td>Progress is lost on restart; works only with a single process</td>
+<td>As soon as there is more than one instance or a worker</td>
+</tr>
+<tr>
+<td><strong>Polling vs WebSockets/SSE</strong></td>
+<td>Polling (1 s, 30 attempts)</td>
+<td>Up to 30 requests per run; about 1 s of delay in the UI</td>
+<td>Many users watching runs at once</td>
+</tr>
+<tr>
+<td><strong>LLM reads profiles vs embeddings (pgvector)</strong></td>
+<td>LLM</td>
+<td>Tokens on every run; less precise as history grows</td>
+<td>When there are many past cases to search</td>
+</tr>
+<tr>
+<td><strong>Local Postgres vs Aurora</strong></td>
+<td>Local</td>
+<td>No pgvector, not shared, not durable</td>
+<td>When a working Aurora endpoint exists (the one provided does not resolve)</td>
+</tr>
+<tr>
+<td><strong>Heuristic learning vs ML-trained ranker</strong></td>
+<td>Heuristic</td>
+<td>Coarse: only SLA-miss and rework rates move the weights</td>
+<td>Once hundreds of labelled outcomes exist</td>
+</tr>
+<tr>
+<td><strong>gpt-4o-mini vs a larger model</strong></td>
+<td>gpt-4o-mini</td>
+<td>Weaker judgement on subtle fit</td>
+<td>If an evaluation set shows poor fit or poor rationales</td>
+</tr>
+</tbody>
+</table>
+<h2>9. Testing and how to run</h2>
+<table>
+<thead>
+<tr>
+<th>Check</th>
+<th>Command</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Backend unit tests (rules, guard, tool limit, learning maths, weights change ranking, name fix)</td>
+<td><code>cd backend; .venv\Scripts\python -m pytest tests -q</code></td>
+<td><strong>15 passed</strong> in 1.5 s</td>
+</tr>
+<tr>
+<td>Front-end type check / lint</td>
+<td><code>cd front-end; npm run typecheck; npm run lint</code></td>
+<td><strong>0 errors, 0 warnings</strong></td>
+</tr>
+<tr>
+<td>Live checks (manual, against the API)</td>
+<td>—</td>
+<td>LLM routing (6 runs); single-candidate fallback; duplicate POST → same id; bad override → 422 + <code>request_id</code>; 3 outcomes → weights v1 (SLA 0.20→0.229, expertise 0.30→0.343) used by the next routing; completion re-routed a QUEUED app; double completion → 409</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Run:</strong> first fill in <code>backend/.env</code> (DATABASE_URL, OPENAI_API_KEY), then <code>cd backend; .venv\Scripts\python -m uvicorn app.main:app --port 8000</code> and <code>cd front-end; npm run dev</code>, and open http://localhost:5173. There are no automated integration, end-to-end, front-end or load tests.</p>
+<h2>10. Known limitations and next steps</h2>
+<table>
+<thead>
+<tr>
+<th>Limitation</th>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>No authentication or roles</td>
+<td>Anyone can override an assignment</td>
+<td>Cognito/JWT with manager and submitter roles</td>
+</tr>
+<tr>
+<td>Runs held in memory; recovery only at startup</td>
+<td>A NEW application can wait until the next restart</td>
+<td>Persistent runs table, SQS worker and a periodic sweep</td>
+</tr>
+<tr>
+<td>Audit trail is append-only only by convention</td>
+<td>History could be edited</td>
+<td>Revoke UPDATE/DELETE on the table, or add a hash chain</td>
+</tr>
+<tr>
+<td>Not deployed; tables created with <code>create_all</code></td>
+<td>Schema drift between environments</td>
+<td>Alembic migrations plus infrastructure-as-code for the AWS design</td>
+</tr>
+<tr>
+<td>Learning uses small samples and simple rules</td>
+<td>Noisy weight swings</td>
+<td>Larger window, minimum-change threshold (0.005 already applied), offline evaluation</td>
+</tr>
+</tbody>
+</table>
+<p><strong>P1:</strong> authentication and roles; persistent runs with an SQS worker and a re-route sweep; Alembic migrations. <strong>P2:</strong> embeddings in pgvector (Aurora); an evaluation set for rationales and fit; a learning dashboard with charts. <strong>P3:</strong> AWS deployment as code; SES/SNS delivery for notifications; load testing.</p>
+<h2>11. API endpoints</h2>
+<p>Base URL <code>http://localhost:8000</code> (interactive docs at <code>/docs</code>). Errors return <code>{detail, request_id}</code>; 202 responses return a <code>run_id</code> to poll.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+<th>Request</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/health</code></td>
+<td>Liveness check</td>
+<td>—</td>
+<td><code>{ok}</code></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/applications</code></td>
+<td>Submit an application and start routing (202)</td>
+<td>applicant, submitter, loan_type, amount, region, credit_score, priority, notes, <code>idempotency_key</code></td>
+<td><code>{application_id, run_id, duplicate, request_id}</code></td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/runs/{run_id}</code></td>
+<td>Poll a routing or ask run</td>
+<td>—</td>
+<td>status, steps[], tools{calls, limit}, result, error</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/applications</code></td>
+<td>List applications</td>
+<td><code>?status=</code></td>
+<td>applications with the assigned underwriter</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/applications/{id}</code></td>
+<td>Application detail</td>
+<td>—</td>
+<td>application, assignment (scores, rationale, exclusions), outcome, history, audit, notifications</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/applications/{id}/route</code></td>
+<td>Re-route a NEW or QUEUED application (202)</td>
+<td>—</td>
+<td><code>{run_id}</code>; 409 if already routed</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/applications/{id}/override</code></td>
+<td>Manager reassignment</td>
+<td>underwriter_id, reason (≥ 10 chars), actor</td>
+<td>new assignment and eligibility warnings</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/applications/{id}/ask</code></td>
+<td>Ask about the decision (202)</td>
+<td>question</td>
+<td><code>{run_id}</code>; the answer arrives in the run result</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/applications/{id}/complete</code></td>
+<td>Record the outcome and learn from it</td>
+<td>decision, turnaround_hours, rework, actor</td>
+<td>outcome, learning (stats before/after, weights version), re-routed queued apps</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/learning</code></td>
+<td>Adaptive learning state</td>
+<td>—</td>
+<td>current weights and version, outcome stats, history</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/underwriters</code></td>
+<td>Underwriters with live load</td>
+<td>—</td>
+<td>load, capacity, quality, turnaround, completed</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/dashboard</code></td>
+<td>Dashboard data</td>
+<td>—</td>
+<td>caseloads, counts by status, recent assignments, learning</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/notifications</code></td>
+<td>Notifications</td>
+<td><code>?recipient=</code></td>
+<td>latest 50 notifications</td>
+</tr>
+</tbody>
+</table></body></html>
