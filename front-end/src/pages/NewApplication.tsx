@@ -164,9 +164,6 @@ export function NewApplication({ onOpenApplication }: Props) {
                 <>
                   <h3>Assigned to {String(result.underwriter_name)}</h3>
                   <p>{String(result.rationale)}</p>
-                  {result.used_fallback === true && (
-                    <p className="muted">GenAI unavailable — rules-engine decision used.</p>
-                  )}
                 </>
               )}
               {result.outcome === "QUEUED" && <h3>Queued: no eligible underwriter right now.</h3>}

@@ -129,3 +129,12 @@ def test_learned_weights_change_the_ranking():
 def test_humanize_replaces_ids_with_names():
     out = humanize_ids("Underwriter 2 beats Underwriter 1; candidate #3 excluded.", {1: "Priya", 2: "Raj", 3: "Maria"})
     assert out == "Raj beats Priya; Maria excluded."
+
+
+def test_single_candidate_rationale_states_basis_without_mentioning_genai():
+    state = _guard_state(None)
+    state["scored"] = state["scored"][:1]
+    state["fallback_reason"] = "Only one eligible candidate"
+    out = guard(state)
+    assert "only underwriter who meets every eligibility rule" in out["rationale"]
+    assert "GenAI" not in out["rationale"]

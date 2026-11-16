@@ -6,6 +6,7 @@ export function useLoad<T>(loader: () => Promise<T>) {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -15,6 +16,7 @@ export function useLoad<T>(loader: () => Promise<T>) {
         if (!cancelled) {
           setData(d);
           setError(null);
+          setLoadedAt(new Date());
         }
       })
       .catch((e: unknown) => {
@@ -29,5 +31,5 @@ export function useLoad<T>(loader: () => Promise<T>) {
   }, [loader, tick]);
 
   const reload = useCallback(() => setTick((t) => t + 1), []);
-  return { data, error, loading, reload };
+  return { data, error, loading, reload, loadedAt };
 }

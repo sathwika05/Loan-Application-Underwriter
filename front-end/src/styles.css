@@ -33,6 +33,11 @@ input, select, textarea { font: inherit; padding: 8px; border-radius: 6px; borde
 .form label { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
 .form .wide { grid-column: 1 / -1; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.row.toolbar { align-items: flex-end; gap: 12px; }
+.toolbar label { display: flex; flex-direction: column; gap: 4px; font-size: .9rem; }
+.toolbar select { width: auto; min-width: 180px; }
+.toolbar button { line-height: inherit; }
+.toolbar .muted { padding-bottom: 9px; }
 .grow { flex: 1; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; }
 .muted { color: var(--muted); font-size: .9rem; }

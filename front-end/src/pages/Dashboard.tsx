@@ -8,14 +8,19 @@ interface Props {
 }
 
 export function Dashboard({ onOpenApplication }: Props) {
-  const { data, error, loading, reload } = useLoad(api.dashboard);
+  const { data, error, loading, reload, loadedAt } = useLoad(api.dashboard);
 
   return (
     <div className="page">
       <div className="row">
         <h1 className="grow">Dashboard</h1>
-        <button type="button" className="secondary" onClick={reload}>
-          Refresh
+        {loadedAt && (
+          <span className="muted" aria-live="polite">
+            Updated {loadedAt.toLocaleTimeString()}
+          </span>
+        )}
+        <button type="button" className="secondary" onClick={reload} disabled={loading}>
+          {loading ? "Refreshing…" : "Refresh"}
         </button>
       </div>
       {loading && !data && <p>Loading…</p>}

@@ -159,6 +159,12 @@ def guard(state: RouteState):
         rationale = humanize_ids(str(llm_rationale), {c["underwriter_id"]: c["name"] for c in state["scored"]})
     else:
         rationale = template_rationale(state["application"], chosen, runner_up, len(state["excluded"]))
+        if runner_up is None:
+            # State the actual basis of selection when there was no one to compare against.
+            app = state["application"]
+            rationale += (f" {chosen['name']} is the only underwriter who meets every eligibility rule for this "
+                          f"application: {app.loan_type} expertise, licensed for {app.region}, approval authority of "
+                          f"at least ${app.amount:,.0f}, active, and with free capacity.")
     return {"final": final, "chosen": chosen, "rationale": rationale}
 
 

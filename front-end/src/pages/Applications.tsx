@@ -23,12 +23,12 @@ export function Applications({ selectedId, onSelect }: Props) {
 function ApplicationList({ onSelect }: { onSelect: (id: number) => void }) {
   const [status, setStatus] = useState<AppStatus | "">("");
   const loader = useCallback(() => api.listApplications(status || undefined), [status]);
-  const { data, error, loading, reload } = useLoad(loader);
+  const { data, error, loading, reload, loadedAt } = useLoad(loader);
 
   return (
     <div className="page">
       <h1>Applications</h1>
-      <div className="row">
+      <div className="row toolbar">
         <label>
           Status{" "}
           <select value={status} onChange={(e) => setStatus(e.target.value as AppStatus | "")}>
@@ -39,11 +39,16 @@ function ApplicationList({ onSelect }: { onSelect: (id: number) => void }) {
             <option value="NEW">NEW</option>
           </select>
         </label>
-        <button type="button" className="secondary" onClick={reload}>
-          Refresh
+        <button type="button" className="secondary" onClick={reload} disabled={loading}>
+          {loading ? "Refreshing…" : "Refresh"}
         </button>
+        {loadedAt && (
+          <span className="muted" aria-live="polite">
+            Updated {loadedAt.toLocaleTimeString()}
+          </span>
+        )}
       </div>
-      {loading && <p>Loading…</p>}
+      {loading && !data && <p>Loading…</p>}
       {error !== null && <ErrorBox error={error} onRetry={reload} />}
       {data && data.length === 0 && <p className="muted">No applications yet. Create one from “New Application”.</p>}
       {data && data.length > 0 && (
@@ -127,9 +132,6 @@ function DetailBody({ detail, onChanged }: { detail: Detail; onChanged: () => vo
           <p>{asg.rationale}</p>
           {asg.decision.weights_version !== undefined && (
             <p className="muted">Scored with learned weights v{asg.decision.weights_version}.</p>
-          )}
-          {asg.decision.used_fallback && (
-            <p className="muted">GenAI not used: {asg.decision.fallback_reason ?? "fallback"} — rules decision.</p>
           )}
           {(asg.decision.eligibility_warnings?.length ?? 0) > 0 && (
             <p className="muted">Override warnings: {asg.decision.eligibility_warnings?.join("; ")}</p>
